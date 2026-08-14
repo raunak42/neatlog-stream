@@ -28,6 +28,20 @@ const TOOL_INPUTS: Record<string, string[]> = {
     mcp__github__search_issues: ['{"query":"is:open label:bug"}'],
 };
 
+/** Occasionally a read returns a whole file, which is what exercises truncation. */
+function largeFileOutput(): string {
+    const block = [
+        ".calc {",
+        "  position: relative;",
+        "  border-radius: 40px;",
+        "  background: linear-gradient(180deg, rgba(255,255,255,0.1), rgba(255,255,255,0.04));",
+        "  box-shadow: 0 30px 60px -15px rgba(0,0,0,0.6);",
+        "}",
+        "",
+    ].join("\n");
+    return `Output: ${block.repeat(randomInt(140, 420))}\nIsError: false`;
+}
+
 const TOOL_OUTPUTS: Record<string, string[]> = {
     read: ["Output: import express from 'express';\n…\nIsError: false"],
     write: ["Output: Wrote 42 lines to src/store.ts\nIsError: false"],
@@ -129,22 +143,6 @@ function makeSpan(params: {
     return span;
 }
 
-const CONTENT_LIMIT = 16_384;
-
-/** Mirrors the server-side clipping the real API applies to oversized fields. */
-function applyTruncation(span: Span, traceId: string): void {
-    if (span.data.output_value.length <= CONTENT_LIMIT) return;
-
-    span.data.output_value = span.data.output_value.slice(0, CONTENT_LIMIT);
-    span.output_truncated = true;
-    span.payload_signed_url = `/api/traces/v3/${traceId}/spans/${span.span_id}/payload`;
-    span.session_projection = {
-        content_limit: CONTENT_LIMIT,
-        truncated: true,
-        truncated_fields: ["data.output_value"],
-    };
-}
-
 export interface GenerateOptions {
     id: number;
     ts: number;
@@ -241,7 +239,9 @@ export function generateTrace(options: GenerateOptions): Trace {
             data: {
                 ...withDuration(emptySpanData(), durationMs),
                 input_value: `Name: ${tool.name}\nArguments: ${pick(TOOL_INPUTS[tool.name] ?? ["{}"])}`,
-                output_value: pick(TOOL_OUTPUTS[tool.name] ?? ["Output: ok"]),
+                output_value: tool.name === "read" && Math.random() < 0.25
+                    ? largeFileOutput()
+                    : pick(TOOL_OUTPUTS[tool.name] ?? ["Output: ok"]),
                 tool_name: tool.name,
                 tool_description: tool.description,
             },
@@ -250,7 +250,6 @@ export function generateTrace(options: GenerateOptions): Trace {
             createdAt,
             updatedAt,
         });
-        applyTruncation(toolSpan, traceId);
         spans.push(toolSpan);
     }
 

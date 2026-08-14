@@ -1,38 +1,52 @@
-import type { HistoryResponse, Trace } from "./types.js";
+import type { HistoryResponse, Projection, Trace, TraceSummary } from "./types.js";
 
 export interface StoreOptions {
     /** Entries retained before the oldest are evicted. */
     capacity: number;
+    /** Bytes of `data.output_value` kept inline before clipping. */
+    contentLimit?: number;
 }
+
+export const DEFAULT_CONTENT_LIMIT = 16_384;
 
 /**
  * Append-only in-memory log with a bounded window.
  *
- * Entries are kept sorted by `id`, which increases monotonically, so every
- * lookup is a binary search rather than a scan — at 100k entries a linear scan
- * per request is wasteful, and the array is already ordered.
+ * Entries stay sorted by `id`, which increases monotonically, so lookups are
+ * binary searches rather than scans. Eviction drops from the front in batches:
+ * shifting one element per append turns every append into an O(n) copy once the
+ * buffer is full, and amortising keeps steady-state appends O(1).
  *
- * Eviction drops from the front in batches. Shifting one element at a time
- * turns each append into an O(n) copy once the buffer is full; amortising it
- * keeps steady-state appends O(1).
+ * Clipping oversized span output happens here rather than in the generator,
+ * because it is a property of how data is served, not of the data itself. The
+ * full text is kept aside so it can still be fetched explicitly.
  */
 export class TraceStore {
     private entries: Trace[] = [];
+    private byTraceId = new Map<string, Trace>();
+    /** Full pre-clip output, keyed `${traceId}:${spanId}`. Only oversized spans. */
+    private payloads = new Map<string, string>();
+
     private nextId = 1;
     private readonly capacity: number;
     private readonly evictionBatch: number;
+    private readonly contentLimit: number;
 
     constructor(options: StoreOptions) {
         if (options.capacity < 1) throw new Error("capacity must be at least 1");
         this.capacity = options.capacity;
         this.evictionBatch = Math.max(1, Math.floor(options.capacity * 0.01));
+        this.contentLimit = options.contentLimit ?? DEFAULT_CONTENT_LIMIT;
     }
 
     get size(): number {
         return this.entries.length;
     }
 
-    /** Id the next appended entry will receive. */
+    get payloadCount(): number {
+        return this.payloads.size;
+    }
+
     peekNextId(): number {
         return this.nextId;
     }
@@ -46,11 +60,37 @@ export class TraceStore {
         return this.entries.length === 0 ? null : this.entries[0]!.id;
     }
 
+    private payloadKey(traceId: string, spanId: string): string {
+        return `${traceId}:${spanId}`;
+    }
+
+    /** Clips oversized output and records the full text for later retrieval. */
+    private clipOversizedOutput(trace: Trace): void {
+        for (const span of trace.spans) {
+            const full = span.data.output_value;
+            if (full.length <= this.contentLimit) continue;
+
+            this.payloads.set(this.payloadKey(trace._id, span.span_id), full);
+            span.data.output_value = full.slice(0, this.contentLimit);
+            span.output_truncated = true;
+            span.payload_signed_url = `/api/traces/v3/${trace._id}/spans/${span.span_id}/payload`;
+            span.session_projection = {
+                content_limit: this.contentLimit,
+                truncated: true,
+                truncated_fields: ["data.output_value"],
+            };
+        }
+    }
+
     append(build: (id: number) => Trace): Trace {
         const entry = build(this.nextId);
         this.nextId += 1;
+
+        this.clipOversizedOutput(entry);
         this.entries.push(entry);
+        this.byTraceId.set(entry._id, entry);
         this.evictIfNeeded();
+
         return entry;
     }
 
@@ -58,14 +98,19 @@ export class TraceStore {
         if (this.entries.length <= this.capacity) return;
 
         const overflow = this.entries.length - this.capacity;
-        // Always clear the overflow, plus a batch, so this runs rarely.
-        this.entries.splice(0, overflow + this.evictionBatch - 1);
+        const removed = this.entries.splice(0, overflow + this.evictionBatch - 1);
+
+        // The side indexes are bounded by the same window, so they are pruned
+        // with the entries they belong to.
+        for (const trace of removed) {
+            this.byTraceId.delete(trace._id);
+            for (const span of trace.spans) {
+                this.payloads.delete(this.payloadKey(trace._id, span.span_id));
+            }
+        }
     }
 
-    /**
-     * Index of the first entry with `id >= target`, or `length` if none.
-     * The array is sorted by id, so this is a binary search.
-     */
+    /** Index of the first entry with `id >= target`, or `length` if none. */
     private lowerBound(target: number): number {
         let low = 0;
         let high = this.entries.length;
@@ -79,17 +124,23 @@ export class TraceStore {
         return low;
     }
 
+    private project(trace: Trace, projection: Projection): Trace | TraceSummary {
+        if (projection === "session") return trace;
+        const { spans: _spans, ...summary } = trace;
+        return { ...summary, projection: "list" };
+    }
+
     /**
      * The `limit` entries immediately older than `before`, newest first.
      * Omitting `before` returns the newest `limit` entries.
      */
-    getBefore(before: number | undefined, limit: number): HistoryResponse {
+    getBefore(before: number | undefined, limit: number, projection: Projection = "session"): HistoryResponse {
         const end = before === undefined ? this.entries.length : this.lowerBound(before);
         const start = Math.max(0, end - limit);
         const page = this.entries.slice(start, end).reverse();
 
         return {
-            logs: page,
+            logs: page.map((trace) => this.project(trace, projection)),
             // Anchors the next page. Null only when this page is empty, so a
             // client never loses its place while entries still exist.
             nextCursor: page.length > 0 ? page[page.length - 1]!.id : null,
@@ -101,20 +152,37 @@ export class TraceStore {
      * Entries strictly newer than `after`, oldest first — the gap backfill used
      * when reconciling history against buffered live messages.
      */
-    getAfter(after: number, limit: number): HistoryResponse {
+    getAfter(after: number, limit: number, projection: Projection = "session"): HistoryResponse {
         const start = this.lowerBound(after + 1);
         const page = this.entries.slice(start, start + limit);
 
         return {
-            logs: page,
-            // For a forward scan the cursor is the newest id returned, so the
-            // caller can pass it straight back as the next `after`.
+            logs: page.map((trace) => this.project(trace, projection)),
+            // For a forward scan the cursor is the newest id returned, so it can
+            // be passed straight back as the next `after`.
             nextCursor: page.length > 0 ? page[page.length - 1]!.id : null,
             hasMore: start + page.length < this.entries.length,
         };
     }
 
-    /** Test and diagnostic helper. */
+    /** Full trace by hex `_id` or by numeric cursor id. */
+    getTrace(identifier: string): Trace | null {
+        const byHex = this.byTraceId.get(identifier);
+        if (byHex) return byHex;
+
+        const numeric = Number(identifier);
+        if (!Number.isInteger(numeric)) return null;
+
+        const index = this.lowerBound(numeric);
+        const candidate = this.entries[index];
+        return candidate && candidate.id === numeric ? candidate : null;
+    }
+
+    /** Pre-clip output for a span, or null if it was never clipped or has aged out. */
+    getSpanPayload(traceId: string, spanId: string): string | null {
+        return this.payloads.get(this.payloadKey(traceId, spanId)) ?? null;
+    }
+
     snapshot(): readonly Trace[] {
         return this.entries;
     }

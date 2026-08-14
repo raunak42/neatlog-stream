@@ -109,13 +109,29 @@ export interface Trace {
     detection_counts: Record<string, number>;
     detections: unknown[];
     status: TraceStatus;
-    projection: "session";
+    projection: Projection;
 }
 
+/**
+ * A trace without its spans. The list view renders only rollups, and shipping
+ * every span makes a page an order of magnitude larger than it needs to be.
+ */
+export type TraceSummary = Omit<Trace, "spans">;
+
+export type Projection = "session" | "list";
+
 export interface HistoryResponse {
-    logs: Trace[];
+    logs: Array<Trace | TraceSummary>;
     nextCursor: number | null;
     hasMore: boolean;
+}
+
+export interface SpanPayloadResponse {
+    traceId: string;
+    span_id: string;
+    field: "data.output_value";
+    content: string;
+    length: number;
 }
 
 export type ServerMessage =

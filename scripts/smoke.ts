@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import { startServer } from "../src/server.js";
 import { TraceStore } from "../src/store.js";
 import { generateTrace } from "../src/generator.js";
-import type { HistoryResponse, ServerMessage, Trace } from "../src/types.js";
+import type { HistoryResponse, ServerMessage, SpanPayloadResponse, Trace } from "../src/types.js";
 
 let passed = 0;
 async function check(name: string, fn: () => void | Promise<void>): Promise<void> {
@@ -198,6 +198,78 @@ await check("backfill via after closes a gap the client missed", async () => {
     assert.equal(ids[0], from + 1);
 });
 
+console.log("\nprojections");
+await check("list projection drops spans but keeps every rollup", async () => {
+    const res = await fetch(`${base}/api/logs?limit=5&projection=list`);
+    const body = await res.json() as HistoryResponse;
+    for (const trace of body.logs) {
+        assert.equal("spans" in trace, false, "list projection still carries spans");
+        assert.equal(trace.projection, "list");
+        for (const key of ["latency", "spanCount", "toolCalls", "promptTokens", "totalTokensUsed", "status"]) {
+            assert.ok(key in trace, `list projection dropped ${key}`);
+        }
+    }
+});
+
+await check("list projection is dramatically lighter than the full document", async () => {
+    const full = (await (await fetch(`${base}/api/logs?limit=50`)).text()).length;
+    const list = (await (await fetch(`${base}/api/logs?limit=50&projection=list`)).text()).length;
+    const ratio = full / list;
+    assert.ok(ratio > 4, `expected a large reduction, got ${ratio.toFixed(1)}x`);
+    console.log(`       (${(full / 1024).toFixed(0)}KB full -> ${(list / 1024).toFixed(0)}KB list, ${ratio.toFixed(1)}x smaller)`);
+});
+
+await check("cursors behave identically under either projection", async () => {
+    const full = await get("/api/logs?limit=20");
+    const list = await get("/api/logs?limit=20&projection=list");
+    assert.deepEqual(list.logs.map((l) => l.id), full.logs.map((l) => l.id));
+    assert.equal(list.nextCursor, full.nextCursor);
+    assert.equal(list.hasMore, full.hasMore);
+});
+
+await check("rejects an unknown projection with 400", async () => {
+    assert.equal((await fetch(`${base}/api/logs?projection=nope`)).status, 400);
+});
+
+console.log("\ndetail and payload");
+await check("a trace is fetchable by hex _id and by numeric id", async () => {
+    const { logs } = await get("/api/logs?limit=1");
+    const summary = logs[0] as Trace;
+    const byHex = await (await fetch(`${base}/api/traces/${summary._id}`)).json() as Trace;
+    const byNum = await (await fetch(`${base}/api/traces/${summary.id}`)).json() as Trace;
+    assert.equal(byHex.id, summary.id);
+    assert.equal(byNum._id, summary._id);
+    assert.ok(Array.isArray(byHex.spans) && byHex.spans.length > 0);
+});
+
+await check("an unknown trace id is a 404, not a crash", async () => {
+    assert.equal((await fetch(`${base}/api/traces/deadbeef`)).status, 404);
+});
+
+await check("oversized output is clipped and advertises a payload url", async () => {
+    const { logs } = await get("/api/logs?limit=400");
+    const clipped = (logs as Trace[]).flatMap((t) => t.spans).filter((s) => s.output_truncated);
+    assert.ok(clipped.length > 0, "no span was clipped — truncation never fires");
+    const span = clipped[0]!;
+    assert.equal(span.data.output_value.length, span.session_projection!.content_limit);
+    assert.deepEqual(span.session_projection!.truncated_fields, ["data.output_value"]);
+    assert.ok(span.payload_signed_url!.endsWith("/payload"));
+    console.log(`       (${clipped.length} clipped spans in the newest 400 traces)`);
+});
+
+await check("the advertised payload url resolves and returns the full text", async () => {
+    const { logs } = await get("/api/logs?limit=400");
+    const withPayload = (logs as Trace[]).flatMap((t) => t.spans).find((s) => s.payload_signed_url);
+    assert.ok(withPayload, "expected at least one clipped span");
+    const res = await fetch(`${base}${withPayload!.payload_signed_url}`);
+    assert.equal(res.status, 200, "the url we advertise must resolve");
+    const body = await res.json() as SpanPayloadResponse;
+    assert.equal(body.span_id, withPayload!.span_id);
+    assert.equal(body.field, "data.output_value");
+    assert.ok(body.length > withPayload!.data.output_value.length, "payload is not longer than the clipped value");
+    assert.ok(body.content.startsWith(withPayload!.data.output_value), "clipped value is not a prefix of the full payload");
+});
+
 console.log("\nring buffer");
 await check("evicts oldest and never exceeds capacity", () => {
     const store = new TraceStore({ capacity: 1000 });
@@ -220,6 +292,18 @@ await check("ids stay monotonic across eviction, and cursors still resolve", () 
     const evicted = store.getBefore(5, 10);
     assert.deepEqual(evicted.logs, []);
     assert.equal(evicted.hasMore, false);
+});
+
+await check("stored payloads are evicted with their traces", () => {
+    const store = new TraceStore({ capacity: 50, contentLimit: 200 });
+    for (let i = 0; i < 600; i += 1) {
+        store.append((id) => generateTrace({ id, ts: Date.now(), sessionId: "s", step: 1 }));
+    }
+    assert.ok(store.size <= 50);
+    // Payload retention is bounded by the window, so it cannot grow without limit.
+    assert.ok(store.payloadCount <= 50 * 4, `payload map grew to ${store.payloadCount}`);
+    const oldest = store.oldestId()!;
+    assert.equal(store.getTrace(String(oldest - 1)), null, "an evicted trace is still reachable");
 });
 
 await check("appends stay fast once the buffer is full", () => {

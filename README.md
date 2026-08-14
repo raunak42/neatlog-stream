@@ -8,7 +8,7 @@ Entries are **Neatlogs-shaped trace documents**, not flat log lines.
 ```bash
 npm install
 npm start          # http://127.0.0.1:4500
-npm run smoke      # 21 contract checks
+npm run smoke      # 30 contract checks
 ```
 
 ## Data shape
@@ -56,7 +56,7 @@ Faithful to the original, including its quirks:
   than a reduce over `spans`.
 - Oversized `output_value` is clipped at 16 KB and marked with
   `output_truncated`, `session_projection.truncated_fields`, and a
-  `payload_signed_url` for fetching the full payload.
+  `payload_signed_url` — which is served, not just advertised.
 
 ### Two additions
 
@@ -75,6 +75,7 @@ so cursor pagination and the WebSocket handshake need something monotonic:
 | `before` | — | entries immediately **older** than this id, newest→oldest |
 | `after` | — | entries strictly **newer** than this id, oldest→newest |
 | `limit` | 50 | 1–500 |
+| `projection` | `session` | `session` = full document, `list` = rollups without `spans` |
 
 Omit both cursors for the newest `limit` entries. Passing both is a 400, as are
 non-integer or negative cursors and a `limit` below 1.
@@ -86,6 +87,38 @@ non-integer or negative cursors and a `limit` below 1.
 `nextCursor` is the id of the last entry in the page — the oldest for a `before`
 scan, the newest for an `after` scan — so it feeds straight back into the next
 request. It is `null` only when the page is empty.
+
+### Projections
+
+`projection=list` drops `spans` and keeps every rollup — **6.8× smaller** in
+practice (207 KB → 30 KB for a 50-entry page). A scrollable list only renders
+`name`, `latency`, `status`, and token counts, so it does not need the spans.
+Cursors, `nextCursor`, and `hasMore` behave identically under either projection.
+
+The default is `session` (the full document), so the history contract is
+unchanged for anything already using it.
+
+## `GET /api/traces/:traceId`
+
+The detail view. Accepts the hex `_id` or the numeric cursor id, so a list built
+from `projection=list` can drill into a full trace. 404 once a trace has been
+evicted from the buffer.
+
+## `GET /api/traces/v3/:traceId/spans/:spanId/payload`
+
+`data.output_value` is clipped at 16 KB. A clipped span is marked with
+`output_truncated`, `session_projection.truncated_fields`, and a
+`payload_signed_url` pointing here — the full pre-clip text, for an
+expand-on-demand UI.
+
+```jsonc
+{ "traceId": "…", "span_id": "…", "field": "data.output_value",
+  "content": "…", "length": 41230 }
+```
+
+Clipping happens at the store rather than in the generator, because it is a
+property of how data is served, not of the data itself. Retained payloads are
+bounded by the same window as the traces and are evicted alongside them.
 
 Also `GET /api/stats` and `GET /health` for diagnostics.
 
@@ -133,3 +166,6 @@ contiguous.
   fast once full (20k appends against a full buffer: ~107 ms).
 
 Configure with `PORT`, `CAPACITY`, `SEED_COUNT`, `INTERVAL_MS`.
+
+Cross-origin reads are allowed, so a frontend on its own dev origin can call the
+history API directly.
