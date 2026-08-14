@@ -1,0 +1,38 @@
+# Single always-on machine. Both settings below are load-bearing, not defaults.
+app = "neatlog-stream"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PORT = "4500"
+  # ~5 KB per trace, so this is roughly 256 MB of heap. Keep it under the VM size.
+  CAPACITY = "50000"
+  SEED_COUNT = "5000"
+  INTERVAL_MS = "1000"
+
+[http_service]
+  internal_port = 4500
+  force_https = true
+  # All state lives in memory and a generator must keep ticking with nobody
+  # connected, so the machine must never stop and must never scale past one.
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 500
+    soft_limit = 400
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "3s"
+  grace_period = "20s"
+  method = "GET"
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # 512 MB leaves no headroom above a 50k buffer; 1 GB does.
+  memory = "1gb"
