@@ -1,0 +1,25 @@
+{
+  "name": "neatlog-stream",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Always-on backend streaming Neatlogs-shaped trace documents over REST history + WebSocket live tail.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.6.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}
