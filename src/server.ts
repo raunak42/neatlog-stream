@@ -40,6 +40,18 @@ export async function startServer(overrides: {
 
     const app = express();
     app.use(express.json());
+
+    // The frontend runs on its own origin in development (Vite, Next, and so
+    // on), so without this every history request fails the browser's CORS check
+    // while curl succeeds. Reads are public in this demo, hence the wildcard.
+    app.use((_req, res, next) => {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+        res.setHeader("Access-Control-Max-Age", "86400");
+        next();
+    });
+    app.options(/.*/, (_req, res) => { res.sendStatus(204); });
     app.use("/api", createHistoryRouter(store));
     app.get("/health", (_req, res) => {
         res.json({ ok: true, size: store.size, lastLogId: store.lastId() });
