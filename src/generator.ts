@@ -498,9 +498,14 @@ export function createSessionRotator(options: RotatorOptions = {}) {
     // rate, because the list's rate is the sum of all sessions and there is only
     // one. The cost is that the list shows a single conversation at a time
     // rather than a mix, which is the price of the two rates matching.
+    //
+    // The ceiling is half the buffer on purpose. A thread that ends only stays
+    // at full size if the buffer can hold it while the next one fills; at equal
+    // sizes the successor evicts it as it grows, and every session found in the
+    // buffer is mid-cycle rather than complete.
     const residentCount = options.residents ?? 1;
     const residentShare = options.residentShare ?? 1;
-    const residentTurns = options.residentTurns ?? 10_000;
+    const residentTurns = options.residentTurns ?? 50_000;
     // Fixed, not spread: every finished thread is the same size, so whichever
     // one is opened puts the same load on the page.
     const residentTarget = () => residentTurns;
