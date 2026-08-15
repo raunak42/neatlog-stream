@@ -328,7 +328,7 @@ export function generateTrace(options: GenerateOptions): Trace {
 
     const { provider, model } = pick(MODELS);
     const isError = Math.random() < 0.07;
-    const toolCount = isError ? 0 : randomInt(1, 3);
+    const toolCount = isError ? 0 : randomInt(0, 3);
     const toolsUsed = Array.from({ length: toolCount }, () => pick(wf.tools));
     const concludes = !isError && options.isLast === true;
 
@@ -349,7 +349,9 @@ export function generateTrace(options: GenerateOptions): Trace {
         ? ""
         : concludes
             ? pick(wf.finals)
-            : `Ran ${toolNames.join(", ")} — continuing.`;
+            : toolNames.length > 0
+                ? `Ran ${toolNames.join(", ")} — continuing.`
+                : "Thinking through the next step — continuing.";
 
     const spans: Span[] = [];
     const rootSpanId = hexId(8);
