@@ -24,8 +24,8 @@ than embedding. The root span is the one with no `parent_span_id`.
   "ts": 1786700000000,             // unix ms (addition)
 
   "_id": "c370533c079b63a02d3ac9d37ea09ca8",
-  "name": "perry.turn step 2",
-  "sessionId": "c8bb45ee-…", "workflowName": "perry",
+  "name": "support-triage.turn",
+  "sessionId": "c8bb45ee-…", "workflowName": "support-triage",
   "createdAt": "…", "updatedAt": "…",
 
   "latency": 1560, "spanCount": 4,
@@ -34,9 +34,14 @@ than embedding. The root span is the one with no `parent_span_id`.
   "promptTokens": 8952, "completionTokens": 167,
   "totalTokensUsed": 9119, "totalTokensCost": 0.029361,
 
+  // denormalised from the root span so a list row needs no spans
+  "input": "Refund request for order 88421 — shipped late, wants full refund",
+  "output": "Refund approved under policy 4.2 and processed; customer notified.",
+  "tags": ["support-triage", "v2.4.1", "production"],
+
   "spans": [
-    { "span_id": "49ff…", "node_type": "agent_action", "node_name": "perry.turn step 2",
-      "status": "SUCCESS", "span_metadata": { "session.id": "…" },
+    { "span_id": "49ff…", "node_type": "agent_action", "node_name": "support-triage.turn",
+      "status": "SUCCESS", "span_metadata": { "session.id": "…", "turn.index": "2" },
       "data": { "input_value": "…", "output_value": "…", "display_blocks": [ … ],
                 "duration_ms": 1560.4, "llm_model": "", "prompt_tokens": 0, … } },
     { "span_id": "b681…", "parent_span_id": "49ff…", "node_type": "chain", … },

@@ -100,6 +100,11 @@ export interface Trace {
     totalTokensUsed: number;
     totalTokensCost: number;
 
+    /** Denormalised copies of the root span's input/output, so a list row can
+     *  be rendered without shipping spans. This is what Neatlogs does. */
+    input: string;
+    output: string;
+
     tags: string[];
     workflowName: string;
     sessionId: string;

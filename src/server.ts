@@ -34,9 +34,9 @@ export async function startServer(overrides: {
     // Seed backwards from now so historical timestamps ascend with id.
     const seedStart = Date.now() - seedCount * intervalMs;
     for (let index = 0; index < seedCount; index += 1) {
-        const { sessionId, step } = nextSession();
+        const { sessionId, step, isLast } = nextSession();
         const ts = seedStart + index * intervalMs;
-        store.append((id) => generateTrace({ id, ts, sessionId, step }));
+        store.append((id) => generateTrace({ id, ts, sessionId, step, isLast }));
     }
 
     const app = express();
@@ -64,8 +64,8 @@ export async function startServer(overrides: {
     // Runs for the life of the process, independent of connected clients: the
     // history endpoint must keep advancing even with nobody listening.
     const timer = setInterval(() => {
-        const { sessionId, step } = nextSession();
-        const trace = store.append((id) => generateTrace({ id, ts: Date.now(), sessionId, step }));
+        const { sessionId, step, isLast } = nextSession();
+        const trace = store.append((id) => generateTrace({ id, ts: Date.now(), sessionId, step, isLast }));
         hub.broadcast(trace);
     }, intervalMs);
     timer.unref?.();
