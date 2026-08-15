@@ -486,9 +486,11 @@ export interface RotatorOptions {
     /** Long-lived threads that keep receiving turns, so there is always a
      *  session growing live rather than a static transcript. */
     residents?: number;
-    /** Share of turns routed to residents. */
+    /** Share of turns routed to residents. The remainder opens and closes
+     *  ordinary short threads, so the conversations view has a mix to show. */
     residentShare?: number;
-    /** Residents rotate at this length so a thread stays finite. */
+    /** Where a resident thread rotates. Infinite by default: the live thread
+     *  never ends, so whatever is open is always the large one. */
     residentTurns?: number;
 }
 
@@ -499,15 +501,21 @@ export function createSessionRotator(options: RotatorOptions = {}) {
     // one. The cost is that the list shows a single conversation at a time
     // rather than a mix, which is the price of the two rates matching.
     //
-    // The ceiling is half the buffer on purpose. A thread that ends only stays
-    // at full size if the buffer can hold it while the next one fills; at equal
-    // sizes the successor evicts it as it grows, and every session found in the
-    // buffer is mid-cycle rather than complete.
+    // That thread never rotates. A finite ceiling meant the live thread spent
+    // half its life too small to be worth opening: it climbed to the ceiling,
+    // retired, and its successor started at zero, so whether clicking through
+    // reached a large conversation was a matter of when you looked. Left
+    // running, it is the buffer that bounds it instead of a counter — the ring
+    // evicts its oldest turns and it settles at roughly capacity, permanently
+    // live and permanently large.
     const residentCount = options.residents ?? 1;
-    const residentShare = options.residentShare ?? 1;
-    const residentTurns = options.residentTurns ?? 50_000;
-    // Fixed, not spread: every finished thread is the same size, so whichever
-    // one is opened puts the same load on the page.
+    // Not quite all of it. At 1.0 the pool never runs and the buffer ends up
+    // holding a single conversation, which leaves the conversations view with
+    // one row; the few percent held back is enough to keep short threads
+    // opening and closing alongside it, and moves the two pages' rates apart
+    // by less than the readout's precision.
+    const residentShare = options.residentShare ?? 0.95;
+    const residentTurns = options.residentTurns ?? Number.POSITIVE_INFINITY;
     const residentTarget = () => residentTurns;
 
     const open = (target?: number): OpenSession => {

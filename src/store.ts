@@ -111,27 +111,39 @@ export class TraceStore {
 
         const overflow = this.entries.length - this.capacity;
         const removed = this.entries.splice(0, overflow + this.evictionBatch - 1);
+        const keptFrom = this.entries[0]?.id ?? Number.MAX_SAFE_INTEGER;
 
         // The side indexes are bounded by the same window, so they are pruned
         // with the entries they belong to.
+        const touched = new Set<string>();
         for (const trace of removed) {
             this.byTraceId.delete(trace._id);
             for (const span of trace.spans) {
                 this.payloads.delete(this.payloadKey(trace._id, span.span_id));
             }
-            // Evicted turns leave the session index; an emptied session leaves too.
-            const turns = this.bySession.get(trace.sessionId);
-            if (!turns) continue;
-            const at = turns.indexOf(trace.id);
-            if (at !== -1) turns.splice(at, 1);
+            touched.add(trace.sessionId);
             if (trace.hasError) {
                 const left = (this.sessionErrors.get(trace.sessionId) ?? 0) - 1;
                 if (left > 0) this.sessionErrors.set(trace.sessionId, left);
                 else this.sessionErrors.delete(trace.sessionId);
             }
+        }
+
+        // Evicted turns leave the session index; an emptied session leaves too.
+        // One cut per session rather than one per turn. A session's ids are
+        // ascending and eviction takes the oldest, so what leaves is always a
+        // prefix — and the live thread never ends, which makes its id list as
+        // long as the buffer. Splicing the front of that once per evicted turn
+        // would copy the whole list a thousand times per round.
+        for (const sessionId of touched) {
+            const turns = this.bySession.get(sessionId);
+            if (!turns) continue;
+            let drop = 0;
+            while (drop < turns.length && turns[drop]! < keptFrom) drop += 1;
+            if (drop > 0) turns.splice(0, drop);
             if (turns.length === 0) {
-                this.bySession.delete(trace.sessionId);
-                this.sessionErrors.delete(trace.sessionId);
+                this.bySession.delete(sessionId);
+                this.sessionErrors.delete(sessionId);
             }
         }
     }
