@@ -2,11 +2,8 @@
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 60,
+    "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10,
-    "multiRegionConfig": {
-      "southeast-asia": { "numReplicas": 1 }
-    }
+    "restartPolicyMaxRetries": 10
   }
 }
