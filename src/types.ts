@@ -143,3 +143,21 @@ export type ServerMessage =
     | { type: "heartbeat"; lastLogId: number }
     | { type: "connected"; lastLogId: number; bootId: string }
     | { type: "log"; data: Trace };
+
+/** A session as the list view needs it: enough to render a row without a
+ *  request per session. */
+export interface SessionSummary {
+    sessionId: string;
+    turns: number;
+    lastId: number;
+    live: boolean;
+    workflowName: string;
+    /** The opening turn's input, and the latest turn's output. */
+    input: string;
+    output: string;
+    startedAt: number;
+    lastAt: number;
+    errors: number;
+    /** Hex id of the latest turn, so the transcript can be opened directly. */
+    lastTraceId: string;
+}

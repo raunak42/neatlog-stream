@@ -1,4 +1,4 @@
-import type { HistoryResponse, Projection, Trace, TraceSummary } from "./types.js";
+import type { HistoryResponse, Projection, SessionSummary, Trace, TraceSummary } from "./types.js";
 
 export interface StoreOptions {
     /** Entries retained before the oldest are evicted. */
@@ -29,6 +29,9 @@ export class TraceStore {
     /** sessionId → its trace ids, ascending. Sessions interleave in the stream,
      *  so without this a session lookup is a scan of the whole window. */
     private bySession = new Map<string, number[]>();
+    /** Failed turns per session, kept running: counting them on demand would
+     *  mean walking every id of a fifty-thousand-turn thread per request. */
+    private sessionErrors = new Map<string, number>();
 
     private nextId = 1;
     private readonly capacity: number;
@@ -95,6 +98,9 @@ export class TraceStore {
         const turns = this.bySession.get(entry.sessionId);
         if (turns) turns.push(entry.id);
         else this.bySession.set(entry.sessionId, [entry.id]);
+        if (entry.hasError) {
+            this.sessionErrors.set(entry.sessionId, (this.sessionErrors.get(entry.sessionId) ?? 0) + 1);
+        }
         this.evictIfNeeded();
 
         return entry;
@@ -118,7 +124,15 @@ export class TraceStore {
             if (!turns) continue;
             const at = turns.indexOf(trace.id);
             if (at !== -1) turns.splice(at, 1);
-            if (turns.length === 0) this.bySession.delete(trace.sessionId);
+            if (trace.hasError) {
+                const left = (this.sessionErrors.get(trace.sessionId) ?? 0) - 1;
+                if (left > 0) this.sessionErrors.set(trace.sessionId, left);
+                else this.sessionErrors.delete(trace.sessionId);
+            }
+            if (turns.length === 0) {
+                this.bySession.delete(trace.sessionId);
+                this.sessionErrors.delete(trace.sessionId);
+            }
         }
     }
 
@@ -131,8 +145,7 @@ export class TraceStore {
      * ones still receiving traffic — a demo needs both, and a large session is
      * not necessarily a live one.
      */
-    listSessions(limit: number, sort: "turns" | "recent" = "turns"):
-    Array<{ sessionId: string; turns: number; lastId: number; live: boolean }> {
+    listSessions(limit: number, sort: "turns" | "recent" = "turns"): SessionSummary[] {
         const newest = this.lastId();
         // Tight on purpose. A thread that has just hit its ceiling still has a
         // recent last id, so a loose window reports it as live right up until
@@ -145,9 +158,26 @@ export class TraceStore {
             const lastId = ids[ids.length - 1] ?? 0;
             rows.push({ sessionId, turns: ids.length, lastId, live: newest - lastId <= liveWindow });
         }
+        // Two lookups per row rather than a scan: the opening turn and the
+        // latest one carry everything a summary needs.
+        const decorate = (row: { sessionId: string; turns: number; lastId: number; live: boolean }): SessionSummary => {
+            const ids = this.bySession.get(row.sessionId) ?? [];
+            const first = this.entryAt(ids[0]);
+            const last = this.entryAt(ids[ids.length - 1]);
+            return {
+                ...row,
+                workflowName: last?.workflowName ?? first?.workflowName ?? "",
+                input: first?.input ?? "",
+                output: last?.output ?? "",
+                startedAt: first?.ts ?? 0,
+                lastAt: last?.ts ?? 0,
+                errors: this.sessionErrors.get(row.sessionId) ?? 0,
+                lastTraceId: last?._id ?? "",
+            };
+        };
         if (sort === "recent") {
             rows.sort((a, b) => b.lastId - a.lastId);
-            return rows.slice(0, limit);
+            return rows.slice(0, limit).map(decorate);
         }
         // Live threads first. Among them, largest-first always names the one
         // closest to finishing, so a caller asking for a big live session gets
@@ -165,7 +195,14 @@ export class TraceStore {
             }
             return b.turns - a.turns;
         });
-        return rows.slice(0, limit);
+        return rows.slice(0, limit).map(decorate);
+    }
+
+    /** The entry with this exact id, or undefined once it has been evicted. */
+    private entryAt(id: number | undefined): Trace | undefined {
+        if (id === undefined) return undefined;
+        const candidate = this.entries[this.lowerBound(id)];
+        return candidate?.id === id ? candidate : undefined;
     }
 
     /**
