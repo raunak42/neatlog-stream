@@ -26,6 +26,9 @@ export class TraceStore {
     private byTraceId = new Map<string, Trace>();
     /** Full pre-clip output, keyed `${traceId}:${spanId}`. Only oversized spans. */
     private payloads = new Map<string, string>();
+    /** sessionId → its trace ids, ascending. Sessions interleave in the stream,
+     *  so without this a session lookup is a scan of the whole window. */
+    private bySession = new Map<string, number[]>();
 
     private nextId = 1;
     private readonly capacity: number;
@@ -89,6 +92,9 @@ export class TraceStore {
         this.clipOversizedOutput(entry);
         this.entries.push(entry);
         this.byTraceId.set(entry._id, entry);
+        const turns = this.bySession.get(entry.sessionId);
+        if (turns) turns.push(entry.id);
+        else this.bySession.set(entry.sessionId, [entry.id]);
         this.evictIfNeeded();
 
         return entry;
@@ -107,7 +113,66 @@ export class TraceStore {
             for (const span of trace.spans) {
                 this.payloads.delete(this.payloadKey(trace._id, span.span_id));
             }
+            // Evicted turns leave the session index; an emptied session leaves too.
+            const turns = this.bySession.get(trace.sessionId);
+            if (!turns) continue;
+            const at = turns.indexOf(trace.id);
+            if (at !== -1) turns.splice(at, 1);
+            if (turns.length === 0) this.bySession.delete(trace.sessionId);
         }
+    }
+
+    get sessionCount(): number {
+        return this.bySession.size;
+    }
+
+    /** Sessions ordered by turn count, for finding a session worth opening. */
+    listSessions(limit: number): Array<{ sessionId: string; turns: number; lastId: number }> {
+        const rows: Array<{ sessionId: string; turns: number; lastId: number }> = [];
+        for (const [sessionId, ids] of this.bySession) {
+            rows.push({ sessionId, turns: ids.length, lastId: ids[ids.length - 1] ?? 0 });
+        }
+        rows.sort((a, b) => b.turns - a.turns || b.lastId - a.lastId);
+        return rows.slice(0, limit);
+    }
+
+    /**
+     * One page of a session's turns, ascending, cursor-paginated. A long
+     * session is the case the detail view has to survive, so it is paged the
+     * same way history is rather than returned whole.
+     */
+    getSession(sessionId: string, options: {
+        after?: number; before?: number; limit: number; projection: Projection;
+    }): { logs: (Trace | TraceSummary)[]; total: number; nextCursor: number | null; hasMore: boolean } {
+        const ids = this.bySession.get(sessionId);
+        if (!ids) return { logs: [], total: 0, nextCursor: null, hasMore: false };
+
+        let from = 0;
+        let to = ids.length;
+        if (options.after !== undefined) {
+            const at = ids.findIndex((id) => id > options.after!);
+            from = at === -1 ? ids.length : at;
+        }
+        if (options.before !== undefined) {
+            const at = ids.findIndex((id) => id >= options.before!);
+            to = at === -1 ? ids.length : at;
+            from = Math.max(from, to - options.limit);
+        }
+
+        const page = ids.slice(from, Math.min(to, from + options.limit));
+        const logs: (Trace | TraceSummary)[] = [];
+        for (const id of page) {
+            // The index can briefly name a turn the ring has already dropped.
+            const entry = this.entries[this.lowerBound(id)];
+            if (entry?.id === id) logs.push(this.project(entry, options.projection));
+        }
+
+        return {
+            logs,
+            total: ids.length,
+            nextCursor: page.length > 0 ? page[page.length - 1]! : null,
+            hasMore: from + page.length < ids.length,
+        };
     }
 
     /** Index of the first entry with `id >= target`, or `length` if none. */

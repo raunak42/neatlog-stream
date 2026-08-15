@@ -268,7 +268,7 @@ function largeToolOutput(): string {
         "  },",
         "",
     ].join("\n");
-    return `Output: ${block.repeat(randomInt(140, 420))}\nIsError: false`;
+    return `Output: ${block.repeat(randomInt(90, 190))}\nIsError: false`;
 }
 
 function emptySpanData(): SpanData {
@@ -417,7 +417,7 @@ export function generateTrace(options: GenerateOptions): Trace {
             data: {
                 ...withDuration(emptySpanData(), durationMs),
                 input_value: `Name: ${tool.name}\nArguments: ${pick(tool.args)}`,
-                output_value: Math.random() < 0.12 ? largeToolOutput() : pick(tool.results),
+                output_value: Math.random() < 0.02 ? largeToolOutput() : pick(tool.results),
                 tool_name: tool.name,
                 tool_description: tool.description,
             },
@@ -461,18 +461,43 @@ export function generateTrace(options: GenerateOptions): Trace {
     };
 }
 
-/** Sessions span several consecutive traces, as a real agent session does. */
-export function createSessionRotator(stepsPerSession = 8) {
-    let sessionId = randomUUID();
-    let step = 0;
+/*
+ * Real ingest interleaves many sessions at once and their lengths are heavily
+ * skewed: most threads are a handful of turns, a few run for hours. A fixed
+ * eight-turn rotation produced neither, which is why nothing downstream ever
+ * had to cope with a large session.
+ */
+function sampleSessionLength(): number {
+    const r = Math.random();
+    if (r < 0.75) return randomInt(2, 15);      // ordinary exchanges
+    if (r < 0.95) return randomInt(20, 90);     // working sessions
+    return randomInt(150, 900);                 // long-running agents
+}
+
+interface OpenSession {
+    id: string;
+    workflow: Workflow;
+    turn: number;
+    target: number;
+}
+
+export function createSessionRotator(options: { poolSize?: number } = {}) {
+    const poolSize = options.poolSize ?? 40;
+    const open = (): OpenSession => {
+        const id = randomUUID();
+        return { id, workflow: workflowFor(id), turn: 0, target: sampleSessionLength() };
+    };
+    const pool: OpenSession[] = Array.from({ length: poolSize }, open);
 
     return function next(): { sessionId: string; step: number; isLast: boolean } {
-        step += 1;
-        if (step > stepsPerSession) {
-            sessionId = randomUUID();
-            step = 1;
-        }
-        return { sessionId, step, isLast: step === stepsPerSession };
+        const index = Math.floor(Math.random() * pool.length);
+        const session = pool[index] as OpenSession;
+        session.turn += 1;
+        const isLast = session.turn >= session.target;
+        const result = { sessionId: session.id, step: session.turn, isLast };
+        // A finished thread is replaced so the pool stays saturated.
+        if (isLast) pool[index] = open();
+        return result;
     };
 }
 

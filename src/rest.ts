@@ -15,13 +15,13 @@ function parseCursor(raw: unknown): number | null | undefined {
     return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-function parseLimit(raw: unknown): number | null {
-    if (raw === undefined) return DEFAULT_LIMIT;
+function parseLimit(raw: unknown, fallback = DEFAULT_LIMIT, max = MAX_LIMIT): number | null {
+    if (raw === undefined) return fallback;
     if (typeof raw !== "string") return null;
 
     const value = Number(raw);
     if (!Number.isInteger(value) || value < 1) return null;
-    return Math.min(value, MAX_LIMIT);
+    return Math.min(value, max);
 }
 
 /** Defaults to the full document so the history contract is unchanged. */
@@ -66,6 +66,43 @@ export function createHistoryRouter(store: TraceStore): Router {
             : store.getBefore(before, limit, projection));
     });
 
+    // Sessions ordered by turn count. A demo needs to be able to find the long
+    // ones; scanning history for them client-side is exactly the access pattern
+    // this endpoint exists to avoid.
+    router.get("/sessions", (req, res) => {
+        const limit = parseLimit(req.query.limit, 20, 200);
+        if (limit === null) {
+            res.status(400).json({ error: "`limit` must be a positive integer" });
+            return;
+        }
+        res.json({ sessions: store.listSessions(limit), total: store.sessionCount });
+    });
+
+    // One session's turns, cursor-paginated. Sessions run to hundreds of turns,
+    // so this is paged like history rather than returned whole.
+    router.get("/sessions/:sessionId", (req, res) => {
+        const before = parseCursor(req.query.before);
+        const after = parseCursor(req.query.after);
+        const limit = parseLimit(req.query.limit, 50, 500);
+        const projection = parseProjection(req.query.projection);
+
+        if (before === null) { res.status(400).json({ error: "`before` must be a non-negative integer id" }); return; }
+        if (after === null) { res.status(400).json({ error: "`after` must be a non-negative integer id" }); return; }
+        if (limit === null) { res.status(400).json({ error: "`limit` must be a positive integer" }); return; }
+        if (projection === null) { res.status(400).json({ error: "`projection` must be `session` or `list`" }); return; }
+        if (before !== undefined && after !== undefined) {
+            res.status(400).json({ error: "use either `before` or `after`, not both" });
+            return;
+        }
+
+        const page = store.getSession(String(req.params.sessionId), { before, after, limit, projection });
+        if (page.total === 0) {
+            res.status(404).json({ error: "session not found or evicted from the buffer" });
+            return;
+        }
+        res.json(page);
+    });
+
     // Detail view. Accepts the hex `_id` or the numeric cursor id, so a list
     // rendered from the `list` projection can drill into a full trace.
     router.get("/traces/:traceId", (req, res) => {
@@ -106,6 +143,7 @@ export function createHistoryRouter(store: TraceStore): Router {
             lastLogId: store.lastId(),
             nextId: store.peekNextId(),
             storedPayloads: store.payloadCount,
+            sessions: store.sessionCount,
         });
     });
 
