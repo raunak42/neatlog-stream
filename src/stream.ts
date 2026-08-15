@@ -2,6 +2,7 @@ import type { Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { TraceStore } from "./store.js";
 import type { ServerMessage, Trace } from "./types.js";
+import { BOOT_ID } from "./bootId.js";
 
 export interface StreamHub {
     broadcast(trace: Trace): void;
@@ -33,7 +34,7 @@ export function attachStream(server: Server, store: TraceStore, path = "/api/str
 
     wss.on("connection", (socket) => {
         clients.add(socket);
-        send(socket, { type: "connected", lastLogId: store.lastId() });
+        send(socket, { type: "connected", lastLogId: store.lastId(), bootId: BOOT_ID });
 
         socket.on("close", () => clients.delete(socket));
         socket.on("error", () => {

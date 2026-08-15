@@ -135,5 +135,5 @@ export interface SpanPayloadResponse {
 }
 
 export type ServerMessage =
-    | { type: "connected"; lastLogId: number }
+    | { type: "connected"; lastLogId: number; bootId: string }
     | { type: "log"; data: Trace };

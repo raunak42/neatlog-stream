@@ -159,6 +159,28 @@ await check("live traces broadcast with contiguous ids", async () => {
     socket.close();
 });
 
+console.log("\nreplica / restart detection");
+await check("handshake carries a bootId", async () => {
+    const socket = new WebSocket(`ws://127.0.0.1:${started.port}/api/stream`);
+    const msg = await new Promise<ServerMessage>((resolve, reject) => {
+        socket.once("message", (raw) => resolve(JSON.parse(String(raw))));
+        socket.once("error", reject);
+    });
+    assert.equal(msg.type, "connected");
+    const bootId = (msg as { bootId: string }).bootId;
+    assert.match(bootId, /^[0-9a-f-]{36}$/, "bootId should be a uuid");
+    // The same value must appear over REST, so a client can compare the two.
+    const stats = await (await fetch(`${base}/api/stats`)).json() as { bootId: string };
+    assert.equal(stats.bootId, bootId, "REST and WS must report the same bootId");
+    socket.close();
+});
+
+await check("bootId is stable within a process", async () => {
+    const a = await (await fetch(`${base}/api/stats`)).json() as { bootId: string };
+    const b = await (await fetch(`${base}/api/stats`)).json() as { bootId: string };
+    assert.equal(a.bootId, b.bootId);
+});
+
 console.log("\nreconciliation (the race this contract exists to prevent)");
 await check("no entry is lost between the handshake and the history fetch", async () => {
     const socket = new WebSocket(`ws://127.0.0.1:${started.port}/api/stream`);

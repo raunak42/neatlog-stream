@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { TraceStore } from "./store.js";
 import type { Projection, SpanPayloadResponse } from "./types.js";
+import { BOOT_ID } from "./bootId.js";
 
 export const DEFAULT_LIMIT = 50;
 export const MAX_LIMIT = 500;
@@ -99,6 +100,7 @@ export function createHistoryRouter(store: TraceStore): Router {
 
     router.get("/stats", (_req, res) => {
         res.json({
+            bootId: BOOT_ID,
             size: store.size,
             oldestId: store.oldestId(),
             lastLogId: store.lastId(),

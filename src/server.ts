@@ -4,6 +4,7 @@ import { createSessionRotator, generateTrace } from "./generator.js";
 import { createHistoryRouter } from "./rest.js";
 import { TraceStore } from "./store.js";
 import { attachStream } from "./stream.js";
+import { BOOT_ID } from "./bootId.js";
 
 const PORT = Number(process.env.PORT ?? 4500);
 const CAPACITY = Number(process.env.CAPACITY ?? 100_000);
@@ -54,7 +55,7 @@ export async function startServer(overrides: {
     app.options(/.*/, (_req, res) => { res.sendStatus(204); });
     app.use("/api", createHistoryRouter(store));
     app.get("/health", (_req, res) => {
-        res.json({ ok: true, size: store.size, lastLogId: store.lastId() });
+        res.json({ ok: true, bootId: BOOT_ID, size: store.size, lastLogId: store.lastId() });
     });
 
     const server = createServer(app);
