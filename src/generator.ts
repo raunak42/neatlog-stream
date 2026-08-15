@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { DisplayBlock, NodeType, Span, SpanData, Trace } from "./types.js";
 
-const PROJECT_ID = "26b054f2-ce27-4b35-aa06-cb7733e3b5e0";
+/** Placeholder. Real ids are per-account and have no business in a demo. */
+const PROJECT_ID = "00000000-0000-4000-8000-000000000001";
 const WORKFLOW = "perry";
 
 const MODELS = [
