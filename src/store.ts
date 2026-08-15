@@ -149,11 +149,13 @@ export class TraceStore {
             rows.sort((a, b) => b.lastId - a.lastId);
             return rows.slice(0, limit);
         }
-        // Live threads first. Among them, largest-first would always name the
-        // one closest to finishing, so a caller asking for "a big live session"
-        // gets one with minutes left. Rank instead by the smallest thread that
-        // is still substantial, which is the one with the most life ahead.
-        const substantial = 400;
+        // Live threads first. Among them, largest-first always names the one
+        // closest to finishing, so a caller asking for a big live session gets
+        // one with minutes left; smallest-first picks the busiest-looking of
+        // the ordinary threads, which barely move. Ordinary threads cannot
+        // exceed 900 turns, so a threshold above that selects only the
+        // long-running ones, and the smallest of those has the most ahead of it.
+        const substantial = 1_000;
         rows.sort((a, b) => {
             if (a.live !== b.live) return Number(b.live) - Number(a.live);
             if (a.live) {
