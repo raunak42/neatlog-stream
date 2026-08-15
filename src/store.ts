@@ -198,6 +198,39 @@ export class TraceStore {
         return rows.slice(0, limit).map(decorate);
     }
 
+    /**
+     * Every turn a session holds, newest-last, in one go. No cursor and no
+     * page: this is the shape an API takes when nobody has thought about size
+     * yet, and it exists so a client can be built against it deliberately.
+     * `limit` caps how many of the newest turns come back, purely so a demo can
+     * choose how much damage to do.
+     */
+    dumpSession(sessionId: string, limit: number, projection: Projection):
+    { logs: (Trace | TraceSummary)[]; total: number; truncated: boolean } {
+        const ids = this.bySession.get(sessionId);
+        if (!ids) return { logs: [], total: 0, truncated: false };
+
+        const from = Math.max(0, ids.length - limit);
+        const logs: (Trace | TraceSummary)[] = [];
+        for (let i = from; i < ids.length; i += 1) {
+            const entry = this.entryAt(ids[i]);
+            if (entry) logs.push(this.project(entry, projection));
+        }
+        return { logs, total: ids.length, truncated: from > 0 };
+    }
+
+    /** The newest entries in the buffer, in one go and without a cursor. */
+    dumpLogs(limit: number, projection: Projection):
+    { logs: (Trace | TraceSummary)[]; total: number; truncated: boolean } {
+        const from = Math.max(0, this.entries.length - limit);
+        const page = this.entries.slice(from);
+        return {
+            logs: page.map((trace) => this.project(trace, projection)),
+            total: this.entries.length,
+            truncated: from > 0,
+        };
+    }
+
     /** The entry with this exact id, or undefined once it has been evicted. */
     private entryAt(id: number | undefined): Trace | undefined {
         if (id === undefined) return undefined;

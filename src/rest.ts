@@ -66,6 +66,38 @@ export function createHistoryRouter(store: TraceStore): Router {
             : store.getBefore(before, limit, projection));
     });
 
+    /*
+     * The unpaginated pair. Everything else here hands back a page and a
+     * cursor; these hand back a heap. They exist so that "the client asks for
+     * what it can show" and "the client asks for everything" are different
+     * calls to different endpoints rather than the same call with a large
+     * number, which is what makes the two behaviours separable in a demo — and
+     * they are the shape the endpoint this imitates actually has.
+     */
+    const DUMP_MAX = 50_000;
+
+    router.get("/logs/bulk", (req, res) => {
+        const limit = parseLimit(req.query.limit, 15_000, DUMP_MAX);
+        const projection = parseProjection(req.query.projection);
+        if (limit === null) { res.status(400).json({ error: "`limit` must be a positive integer" }); return; }
+        if (projection === null) { res.status(400).json({ error: "`projection` must be `session` or `list`" }); return; }
+        res.json(store.dumpLogs(limit, projection));
+    });
+
+    router.get("/sessions/:sessionId/bulk", (req, res) => {
+        const limit = parseLimit(req.query.limit, 15_000, DUMP_MAX);
+        const projection = parseProjection(req.query.projection);
+        if (limit === null) { res.status(400).json({ error: "`limit` must be a positive integer" }); return; }
+        if (projection === null) { res.status(400).json({ error: "`projection` must be `session` or `list`" }); return; }
+
+        const dump = store.dumpSession(String(req.params.sessionId), limit, projection);
+        if (dump.total === 0) {
+            res.status(404).json({ error: "session not found or evicted from the buffer" });
+            return;
+        }
+        res.json(dump);
+    });
+
     // Sessions ordered by turn count. A demo needs to be able to find the long
     // ones; scanning history for them client-side is exactly the access pattern
     // this endpoint exists to avoid.
