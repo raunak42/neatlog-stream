@@ -25,6 +25,14 @@ interface Subscription {
     projection: Projection;
 }
 
+/**
+ * Below whatever idle timeout sits in front of this. A subscription scoped to
+ * one session sends nothing while that session is quiet, and an idle socket is
+ * dropped without a close handshake — measured at 127s, code 1006 — so the
+ * client sees a connection that is open and simply never delivers again.
+ */
+const HEARTBEAT_MS = 25_000;
+
 export function attachStream(server: Server, store: TraceStore, path = "/api/stream"): StreamHub {
     const wss = new WebSocketServer({ server, path });
     const clients = new Map<WebSocket, Subscription>();
@@ -55,6 +63,15 @@ export function attachStream(server: Server, store: TraceStore, path = "/api/str
         });
     });
 
+    const heartbeat = setInterval(() => {
+        const frame = JSON.stringify({ type: "heartbeat", lastLogId: store.lastId() });
+        for (const socket of clients.keys()) {
+            if (socket.readyState !== socket.OPEN) continue;
+            try { socket.send(frame); } catch { /* cleanup runs on close */ }
+        }
+    }, HEARTBEAT_MS);
+    heartbeat.unref?.();
+
     return {
         broadcast(trace) {
             // Two payloads at most, built once and shared by every subscriber.
@@ -83,6 +100,7 @@ export function attachStream(server: Server, store: TraceStore, path = "/api/str
         },
         clientCount: () => clients.size,
         close() {
+            clearInterval(heartbeat);
             for (const socket of clients.keys()) socket.terminate();
             clients.clear();
             return new Promise((resolve) => wss.close(() => resolve()));
