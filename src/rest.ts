@@ -75,7 +75,8 @@ export function createHistoryRouter(store: TraceStore): Router {
             res.status(400).json({ error: "`limit` must be a positive integer" });
             return;
         }
-        res.json({ sessions: store.listSessions(limit), total: store.sessionCount });
+        const sort = req.query.sort === "recent" ? "recent" : "turns";
+        res.json({ sessions: store.listSessions(limit, sort), total: store.sessionCount });
     });
 
     // One session's turns, cursor-paginated. Sessions run to hundreds of turns,

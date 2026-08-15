@@ -126,13 +126,24 @@ export class TraceStore {
         return this.bySession.size;
     }
 
-    /** Sessions ordered by turn count, for finding a session worth opening. */
-    listSessions(limit: number): Array<{ sessionId: string; turns: number; lastId: number }> {
-        const rows: Array<{ sessionId: string; turns: number; lastId: number }> = [];
+    /**
+     * Sessions worth opening. `turns` finds the biggest, `recent` finds the
+     * ones still receiving traffic — a demo needs both, and a large session is
+     * not necessarily a live one.
+     */
+    listSessions(limit: number, sort: "turns" | "recent" = "turns"):
+    Array<{ sessionId: string; turns: number; lastId: number; live: boolean }> {
+        const newest = this.lastId();
+        // Anything touched within the last thousand ids is still being written to.
+        const liveWindow = 1_000;
+        const rows = [];
         for (const [sessionId, ids] of this.bySession) {
-            rows.push({ sessionId, turns: ids.length, lastId: ids[ids.length - 1] ?? 0 });
+            const lastId = ids[ids.length - 1] ?? 0;
+            rows.push({ sessionId, turns: ids.length, lastId, live: newest - lastId <= liveWindow });
         }
-        rows.sort((a, b) => b.turns - a.turns || b.lastId - a.lastId);
+        rows.sort(sort === "recent"
+            ? (a, b) => b.lastId - a.lastId
+            : (a, b) => Number(b.live) - Number(a.live) || b.turns - a.turns || b.lastId - a.lastId);
         return rows.slice(0, limit);
     }
 
@@ -187,6 +198,11 @@ export class TraceStore {
         }
 
         return low;
+    }
+
+    /** Public so the live tail can send summaries rather than full documents. */
+    toProjection(trace: Trace, projection: Projection): Trace | TraceSummary {
+        return this.project(trace, projection);
     }
 
     private project(trace: Trace, projection: Projection): Trace | TraceSummary {

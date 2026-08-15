@@ -481,23 +481,45 @@ interface OpenSession {
     target: number;
 }
 
-export function createSessionRotator(options: { poolSize?: number } = {}) {
-    const poolSize = options.poolSize ?? 40;
-    const open = (): OpenSession => {
-        const id = randomUUID();
-        return { id, workflow: workflowFor(id), turn: 0, target: sampleSessionLength() };
-    };
-    const pool: OpenSession[] = Array.from({ length: poolSize }, open);
+export interface RotatorOptions {
+    poolSize?: number;
+    /** Long-lived threads that keep receiving turns, so there is always a
+     *  session growing live rather than a static transcript. */
+    residents?: number;
+    /** Share of turns routed to residents. */
+    residentShare?: number;
+    /** Residents rotate at this length so a thread stays finite. */
+    residentTurns?: number;
+}
 
-    return function next(): { sessionId: string; step: number; isLast: boolean } {
-        const index = Math.floor(Math.random() * pool.length);
-        const session = pool[index] as OpenSession;
+export function createSessionRotator(options: RotatorOptions = {}) {
+    const poolSize = options.poolSize ?? 40;
+    const residentCount = options.residents ?? 2;
+    const residentShare = options.residentShare ?? 0.45;
+    const residentTurns = options.residentTurns ?? 2500;
+
+    const open = (target?: number): OpenSession => {
+        const id = randomUUID();
+        return { id, workflow: workflowFor(id), turn: 0, target: target ?? sampleSessionLength() };
+    };
+
+    const pool: OpenSession[] = Array.from({ length: poolSize }, () => open());
+    const residents: OpenSession[] = Array.from({ length: residentCount }, () => open(residentTurns));
+
+    const advance = (group: OpenSession[], index: number, target?: number) => {
+        const session = group[index] as OpenSession;
         session.turn += 1;
         const isLast = session.turn >= session.target;
         const result = { sessionId: session.id, step: session.turn, isLast };
-        // A finished thread is replaced so the pool stays saturated.
-        if (isLast) pool[index] = open();
+        if (isLast) group[index] = open(target);
         return result;
+    };
+
+    return function next(): { sessionId: string; step: number; isLast: boolean } {
+        if (residentCount > 0 && Math.random() < residentShare) {
+            return advance(residents, Math.floor(Math.random() * residents.length), residentTurns);
+        }
+        return advance(pool, Math.floor(Math.random() * pool.length));
     };
 }
 
