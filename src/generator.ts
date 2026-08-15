@@ -501,6 +501,8 @@ export function createSessionRotator(options: RotatorOptions = {}) {
     const residentCount = options.residents ?? 4;
     const residentShare = options.residentShare ?? 0.6;
     const residentTurns = options.residentTurns ?? 3000;
+    // Spread the ceilings so the four do not retire in lockstep.
+    const residentTarget = () => randomInt(Math.round(residentTurns * 0.7), residentTurns);
 
     const open = (target?: number): OpenSession => {
         const id = randomUUID();
@@ -508,7 +510,7 @@ export function createSessionRotator(options: RotatorOptions = {}) {
     };
 
     const pool: OpenSession[] = Array.from({ length: poolSize }, () => open());
-    const residents: OpenSession[] = Array.from({ length: residentCount }, () => open(residentTurns));
+    const residents: OpenSession[] = Array.from({ length: residentCount }, () => open(residentTarget()));
 
     const advance = (group: OpenSession[], index: number, target?: number) => {
         const session = group[index] as OpenSession;
@@ -521,7 +523,7 @@ export function createSessionRotator(options: RotatorOptions = {}) {
 
     return function next(): { sessionId: string; step: number; isLast: boolean } {
         if (residentCount > 0 && Math.random() < residentShare) {
-            return advance(residents, Math.floor(Math.random() * residents.length), residentTurns);
+            return advance(residents, Math.floor(Math.random() * residents.length), residentTarget());
         }
         return advance(pool, Math.floor(Math.random() * pool.length));
     };

@@ -134,8 +134,12 @@ export class TraceStore {
     listSessions(limit: number, sort: "turns" | "recent" = "turns"):
     Array<{ sessionId: string; turns: number; lastId: number; live: boolean }> {
         const newest = this.lastId();
-        // Anything touched within the last thousand ids is still being written to.
-        const liveWindow = 1_000;
+        // Tight on purpose. A thread that has just hit its ceiling still has a
+        // recent last id, so a loose window reports it as live right up until
+        // it is ranked first for being the largest — which is exactly the
+        // thread that will never receive another turn. A resident writes every
+        // second or so, and this is twenty seconds of stream at five a second.
+        const liveWindow = 100;
         const rows = [];
         for (const [sessionId, ids] of this.bySession) {
             const lastId = ids[ids.length - 1] ?? 0;
