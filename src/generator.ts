@@ -494,9 +494,13 @@ export interface RotatorOptions {
 
 export function createSessionRotator(options: RotatorOptions = {}) {
     const poolSize = options.poolSize ?? 40;
-    const residentCount = options.residents ?? 2;
-    const residentShare = options.residentShare ?? 0.45;
-    const residentTurns = options.residentTurns ?? 2500;
+    // Four rather than two, so their lifecycles are staggered and the largest
+    // live thread is usually well into its life rather than freshly rotated.
+    // A thread that has retired is still large but no longer receiving, which
+    // is the opposite of what a live demo wants to open on.
+    const residentCount = options.residents ?? 4;
+    const residentShare = options.residentShare ?? 0.6;
+    const residentTurns = options.residentTurns ?? 3000;
 
     const open = (target?: number): OpenSession => {
         const id = randomUUID();
