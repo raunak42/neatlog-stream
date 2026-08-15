@@ -145,9 +145,24 @@ export class TraceStore {
             const lastId = ids[ids.length - 1] ?? 0;
             rows.push({ sessionId, turns: ids.length, lastId, live: newest - lastId <= liveWindow });
         }
-        rows.sort(sort === "recent"
-            ? (a, b) => b.lastId - a.lastId
-            : (a, b) => Number(b.live) - Number(a.live) || b.turns - a.turns || b.lastId - a.lastId);
+        if (sort === "recent") {
+            rows.sort((a, b) => b.lastId - a.lastId);
+            return rows.slice(0, limit);
+        }
+        // Live threads first. Among them, largest-first would always name the
+        // one closest to finishing, so a caller asking for "a big live session"
+        // gets one with minutes left. Rank instead by the smallest thread that
+        // is still substantial, which is the one with the most life ahead.
+        const substantial = 400;
+        rows.sort((a, b) => {
+            if (a.live !== b.live) return Number(b.live) - Number(a.live);
+            if (a.live) {
+                const aBig = a.turns >= substantial, bBig = b.turns >= substantial;
+                if (aBig !== bBig) return Number(bBig) - Number(aBig);
+                if (aBig && bBig) return a.turns - b.turns;
+            }
+            return b.turns - a.turns;
+        });
         return rows.slice(0, limit);
     }
 

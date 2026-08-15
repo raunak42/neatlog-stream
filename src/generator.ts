@@ -500,9 +500,9 @@ export function createSessionRotator(options: RotatorOptions = {}) {
     // is the opposite of what a live demo wants to open on.
     const residentCount = options.residents ?? 4;
     const residentShare = options.residentShare ?? 0.6;
-    const residentTurns = options.residentTurns ?? 3000;
+    const residentTurns = options.residentTurns ?? 7000;
     // Spread the ceilings so the four do not retire in lockstep.
-    const residentTarget = () => randomInt(Math.round(residentTurns * 0.7), residentTurns);
+    const residentTarget = () => randomInt(Math.round(residentTurns * 0.45), residentTurns);
 
     const open = (target?: number): OpenSession => {
         const id = randomUUID();
