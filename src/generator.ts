@@ -493,16 +493,17 @@ export interface RotatorOptions {
 }
 
 export function createSessionRotator(options: RotatorOptions = {}) {
-    const poolSize = options.poolSize ?? 40;
-    // Four rather than two, so their lifecycles are staggered and the largest
-    // live thread is usually well into its life rather than freshly rotated.
-    // A thread that has retired is still large but no longer receiving, which
-    // is the opposite of what a live demo wants to open on.
-    const residentCount = options.residents ?? 4;
-    const residentShare = options.residentShare ?? 0.6;
-    const residentTurns = options.residentTurns ?? 7000;
-    // Spread the ceilings so the four do not retire in lockstep.
-    const residentTarget = () => randomInt(Math.round(residentTurns * 0.45), residentTurns);
+    const poolSize = options.poolSize ?? 4;
+    // One thread at a time, taking everything. Both views then grow at the same
+    // rate, because the list's rate is the sum of all sessions and there is only
+    // one. The cost is that the list shows a single conversation at a time
+    // rather than a mix, which is the price of the two rates matching.
+    const residentCount = options.residents ?? 1;
+    const residentShare = options.residentShare ?? 1;
+    const residentTurns = options.residentTurns ?? 10_000;
+    // Fixed, not spread: every finished thread is the same size, so whichever
+    // one is opened puts the same load on the page.
+    const residentTarget = () => residentTurns;
 
     const open = (target?: number): OpenSession => {
         const id = randomUUID();
