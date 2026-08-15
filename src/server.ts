@@ -31,13 +31,20 @@ export async function startServer(overrides: {
     const store = new TraceStore({ capacity });
     const nextSession = createSessionRotator();
 
+    const mb = () => Math.round(process.memoryUsage().rss / 1024 / 1024);
+    const startedAt = Date.now();
+    console.log(`[boot] node ${process.version} · seeding ${seedCount} traces · capacity ${capacity} · rss ${mb()} MB`);
+
     // Seed backwards from now so historical timestamps ascend with id.
     const seedStart = Date.now() - seedCount * intervalMs;
     for (let index = 0; index < seedCount; index += 1) {
         const { sessionId, step, isLast } = nextSession();
         const ts = seedStart + index * intervalMs;
         store.append((id) => generateTrace({ id, ts, sessionId, step, isLast }));
+        // Progress markers, so a process killed mid-seed still says how far it got.
+        if (index > 0 && index % 20_000 === 0) console.log(`[boot] seeded ${index} · rss ${mb()} MB`);
     }
+    console.log(`[boot] seed complete: ${store.size} traces in ${Date.now() - startedAt}ms · rss ${mb()} MB`);
 
     const app = express();
     app.use(express.json());
@@ -93,6 +100,9 @@ const isDirectRun = process.argv[1] !== undefined
     && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 
 if (isDirectRun) {
+    process.on("uncaughtException", (e) => { console.error("[fatal] uncaughtException:", e); process.exit(1); });
+    process.on("unhandledRejection", (e) => { console.error("[fatal] unhandledRejection:", e); process.exit(1); });
+
     startServer()
         .then((started) => {
             console.log(`neatlog-stream listening on http://127.0.0.1:${started.port}`);
