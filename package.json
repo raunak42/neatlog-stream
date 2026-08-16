@@ -1,5 +1,5 @@
 {
-  "name": "neatlog-stream",
+  "name": "agent-trace-stream",
   "version": "0.1.0",
   "private": true,
   "type": "module",

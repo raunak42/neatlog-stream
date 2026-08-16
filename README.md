@@ -1,4 +1,4 @@
-# neatlog-stream
+# agent-trace-stream
 
 Always-on backend for a trace/log viewer demo: REST history with cursor
 pagination, plus a WebSocket live tail. Backend only — no frontend.

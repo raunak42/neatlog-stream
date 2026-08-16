@@ -105,7 +105,7 @@ if (isDirectRun) {
 
     startServer()
         .then((started) => {
-            console.log(`neatlog-stream listening on http://127.0.0.1:${started.port}`);
+            console.log(`agent-trace-stream listening on http://127.0.0.1:${started.port}`);
             console.log(`  history   GET  /api/logs?before=&after=&limit=`);
             console.log(`  live tail WS   /api/stream`);
             console.log(`  seeded ${started.store.size} traces · capacity ${CAPACITY} · 1 new trace / ${INTERVAL_MS}ms`);
